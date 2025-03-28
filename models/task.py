@@ -54,6 +54,14 @@ class Task:
         self.created_at = datetime.now().isoformat()
         self.updated_at = self.created_at
         self.history = []
+        
+        # Project and task relationships
+        self.project_id = None  # Reference to parent project
+        self.parent_task_id = None  # Reference to parent task if it's a subtask
+        self.subtask_ids = []  # List of child task IDs
+        self.related_task_ids = []  # Tasks that are related but not hierarchical
+        
+        # Implementation details
         self.code = {
             "files": [],
             "tests": []
@@ -101,6 +109,26 @@ class Task:
         }
         self.history.append(history_entry)
         
+    def add_related_task(self, task_id: str, relationship_type: str = "related"):
+        """
+        Add a related task reference.
+        
+        Args:
+            task_id (str): ID of the related task
+            relationship_type (str, optional): Type of relationship. Defaults to "related".
+        """
+        if task_id not in self.related_task_ids:
+            self.related_task_ids.append(task_id)
+            self.updated_at = datetime.now().isoformat()
+            
+            history_entry = {
+                "timestamp": self.updated_at,
+                "type": "relationship_added",
+                "related_task": task_id,
+                "relationship_type": relationship_type
+            }
+            self.history.append(history_entry)
+        
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert task to dictionary representation.
@@ -118,6 +146,10 @@ class Task:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "history": self.history,
+            "project_id": self.project_id,
+            "parent_task_id": self.parent_task_id,
+            "subtask_ids": self.subtask_ids,
+            "related_task_ids": self.related_task_ids,
             "code": self.code,
             "test_results": self.test_results,
             "quality_results": self.quality_results,
@@ -146,6 +178,10 @@ class Task:
         task.created_at = data["created_at"]
         task.updated_at = data["updated_at"]
         task.history = data["history"]
+        task.project_id = data.get("project_id")
+        task.parent_task_id = data.get("parent_task_id")
+        task.subtask_ids = data.get("subtask_ids", [])
+        task.related_task_ids = data.get("related_task_ids", [])
         task.code = data["code"]
         task.test_results = data.get("test_results")
         task.quality_results = data.get("quality_results")

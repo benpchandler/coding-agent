@@ -10,11 +10,13 @@ from datetime import datetime
 from common.logging_utils import setup_logger
 from common.json_utils import load_json, save_json
 from models.task import Task, TaskStatus
+from models.project import Project, ProjectStatus
+from agents.decomposer import decompose_task
+from agents.code_generation_agent import process_task as generate_code
+from agents.testing_agent import validate_implementation as run_tests
+from agents.quality_assessment_agent import assess_quality
+from agents.integration_agent import integrate_task
 from queue import PriorityQueue
-
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 class OrchestratorAgent:
     """
@@ -22,60 +24,47 @@ class OrchestratorAgent:
     implementation, testing, and quality assessment.
     """
     
-    def __init__(self, 
-                 config_path: str = None,
-                 task_dir: str = "tasks",
-                 impl_dir: str = "implementations",
-                 test_dir: str = "tests",
-                 quality_dir: str = "test_results",
-                 integration_dir: str = "integration_tests"):
+    def __init__(self, base_path: str):
         """
         Initialize the orchestrator with configuration and directory settings.
         
         Args:
-            config_path (str): Path to configuration file
-            task_dir (str): Directory for task definitions and tracking
-            impl_dir (str): Directory for implemented code
-            test_dir (str): Directory for unit tests
-            quality_dir (str): Directory for quality assessment results
-            integration_dir (str): Directory for integration tests
+            base_path (str): Base directory for project files
         """
-        # Set up logging
-        self.logger = setup_logger(f"{__name__}.OrchestratorAgent")
+        self.base_path = base_path
+        self.projects: Dict[str, Project] = {}
+        self.tasks: Dict[str, Task] = {}
+        self.logger = setup_logger(__name__)
         
-        # Load configuration
-        config_path = config_path or "./config/config.json"
-        self.config = load_json(config_path) or {}
-        
-        # Set up directory structure
-        self.task_dir = self.config.get("directories", {}).get("tasks", task_dir)
-        self.impl_dir = self.config.get("directories", {}).get("implementations", impl_dir)
-        self.test_dir = self.config.get("directories", {}).get("tests", test_dir)
-        self.quality_dir = self.config.get("directories", {}).get("quality", quality_dir)
-        self.integration_dir = self.config.get("directories", {}).get("integration", integration_dir)
-        
-        # Create directories if they don't exist
-        for directory in [self.task_dir, self.impl_dir, self.test_dir, 
-                         self.quality_dir, self.integration_dir]:
-            os.makedirs(directory, exist_ok=True)
-        
-        # Replace task queue with priority queue
-        self.task_queue = PriorityQueue()
+        # Initialize locks
+        self.tasks_lock = threading.Lock()
         self.task_queue_lock = threading.Lock()
         
-        # Track tasks in memory for faster access
-        self.tasks = {}
-        self.tasks_lock = threading.Lock()
+        # Initialize task queue
+        self.task_queue = PriorityQueue()
+        
+        # Create directory structure if it doesn't exist
+        os.makedirs(os.path.join(base_path, "projects"), exist_ok=True)
+        os.makedirs(os.path.join(base_path, "tasks"), exist_ok=True)
+        os.makedirs(os.path.join(base_path, "implementations"), exist_ok=True)
+        os.makedirs(os.path.join(base_path, "tests"), exist_ok=True)
+        os.makedirs(os.path.join(base_path, "quality"), exist_ok=True)
+        os.makedirs(os.path.join(base_path, "integration"), exist_ok=True)
+        
+        # Load projects and tasks
+        self.load_projects()
+        self.load_tasks()
         
         self.running = False
         self.processing_thread = None
         
         self.logger.info("Orchestrator initialized with directory structure:")
-        self.logger.info(f"Tasks: {self.task_dir}")
-        self.logger.info(f"Implementations: {self.impl_dir}")
-        self.logger.info(f"Tests: {self.test_dir}")
-        self.logger.info(f"Quality Assessment: {self.quality_dir}")
-        self.logger.info(f"Integration Tests: {self.integration_dir}")
+        self.logger.info(f"Projects: {os.path.join(base_path, 'projects')}")
+        self.logger.info(f"Tasks: {os.path.join(base_path, 'tasks')}")
+        self.logger.info(f"Implementations: {os.path.join(base_path, 'implementations')}")
+        self.logger.info(f"Tests: {os.path.join(base_path, 'tests')}")
+        self.logger.info(f"Quality Assessment: {os.path.join(base_path, 'quality')}")
+        self.logger.info(f"Integration Tests: {os.path.join(base_path, 'integration')}")
     
     def start(self):
         """Start the orchestration agent"""
@@ -112,11 +101,12 @@ class OrchestratorAgent:
         structure = {}
         
         for dir_name, dir_path in [
-            ("tasks", self.task_dir),
-            ("implementations", self.impl_dir),
-            ("tests", self.test_dir),
-            ("quality", self.quality_dir),
-            ("integration", self.integration_dir)
+            ("projects", os.path.join(self.base_path, "projects")),
+            ("tasks", os.path.join(self.base_path, "tasks")),
+            ("implementations", os.path.join(self.base_path, "implementations")),
+            ("tests", os.path.join(self.base_path, "tests")),
+            ("quality", os.path.join(self.base_path, "quality")),
+            ("integration", os.path.join(self.base_path, "integration"))
         ]:
             if os.path.exists(dir_path):
                 structure[dir_name] = sorted(os.listdir(dir_path))
@@ -135,24 +125,24 @@ class OrchestratorAgent:
         issues = []
         
         # Get all task IDs
-        task_files = [f for f in os.listdir(self.task_dir) if f.endswith('.json')]
+        task_files = [f for f in os.listdir(os.path.join(self.base_path, "tasks")) if f.endswith('.json')]
         task_ids = [os.path.splitext(f)[0] for f in task_files]
         
         for task_id in task_ids:
             # Check for implementation
             impl_py = f"{task_id.lower().replace('-', '_')}.py"
             impl_jsx = f"{task_id.lower().replace('-', '_')}.jsx"
-            if not os.path.exists(os.path.join(self.impl_dir, impl_py)) and \
-               not os.path.exists(os.path.join(self.impl_dir, impl_jsx)):
+            if not os.path.exists(os.path.join(os.path.join(self.base_path, "implementations"), impl_py)) and \
+               not os.path.exists(os.path.join(os.path.join(self.base_path, "implementations"), impl_jsx)):
                 issues.append(f"Missing implementation for task {task_id}")
             
             # Check for tests
             test_file = f"test_{task_id.lower().replace('-', '_')}.py"
-            if not os.path.exists(os.path.join(self.test_dir, test_file)):
+            if not os.path.exists(os.path.join(os.path.join(self.base_path, "tests"), test_file)):
                 issues.append(f"Missing tests for task {task_id}")
             
             # Check for quality results
-            quality_dir = os.path.join(self.quality_dir, task_id)
+            quality_dir = os.path.join(os.path.join(self.base_path, "quality"), task_id)
             if not os.path.exists(quality_dir):
                 issues.append(f"Missing quality assessment for task {task_id}")
         
@@ -209,19 +199,27 @@ class OrchestratorAgent:
         return task.to_dict()
     
     def get_task(self, task_id: str) -> Optional[Task]:
-        """Get task by ID"""
+        """
+        Get a task by its ID.
+        
+        Args:
+            task_id (str): The ID of the task to retrieve
+            
+        Returns:
+            Optional[Task]: The task if found, None otherwise
+        """
         # Try memory cache first
         with self.tasks_lock:
             if task_id in self.tasks:
                 return self.tasks[task_id]
         
         # Fall back to file system
-        task_path = os.path.join(self.task_dir, f"{task_id}.json")
+        task_path = os.path.join(os.path.join(self.base_path, "tasks"), f"{task_id}.json")
         
         if not os.path.exists(task_path):
             self.logger.error(f"Task {task_id} not found")
             return None
-            
+        
         try:
             task_data = load_json(task_path)
             task = Task.from_dict(task_data)
@@ -229,7 +227,7 @@ class OrchestratorAgent:
             # Update cache
             with self.tasks_lock:
                 self.tasks[task.task_id] = task
-                
+            
             return task
         except Exception as e:
             self.logger.error(f"Error loading task {task_id}: {str(e)}")
@@ -302,7 +300,7 @@ class OrchestratorAgent:
     
     def _save_task(self, task: Task) -> bool:
         """Save task to file"""
-        task_path = os.path.join(self.task_dir, f"{task.task_id}.json")
+        task_path = os.path.join(os.path.join(self.base_path, "tasks"), f"{task.task_id}.json")
         
         try:
             task_data = task.to_dict() if isinstance(task, Task) else task
@@ -317,10 +315,10 @@ class OrchestratorAgent:
         self.logger.info("Loading existing tasks")
         
         try:
-            task_files = [f for f in os.listdir(self.task_dir) if f.endswith('.json')]
+            task_files = [f for f in os.listdir(os.path.join(self.base_path, "tasks")) if f.endswith('.json')]
             
             for task_file in task_files:
-                task_path = os.path.join(self.task_dir, task_file)
+                task_path = os.path.join(os.path.join(self.base_path, "tasks"), task_file)
                 task_data = load_json(task_path)
                 
                 if task_data:
@@ -372,62 +370,98 @@ class OrchestratorAgent:
                 self.logger.error(f"Task {task_id} not found")
                 return
                 
+            project = self.projects.get(task.project_id)
+            
             # Check if task needs decomposition
             if task.status == TaskStatus.CREATED:
-                # Run decomposer agent
-                self.logger.info("Running Decomposer Agent")
-                try:
-                    # Update task status before running decomposer
-                    task.update_status(TaskStatus.DECOMPOSING, "Starting task decomposition")
-                    self._save_task(task)
+                task.update_status(TaskStatus.DECOMPOSING, "Starting task decomposition")
+                self._save_task(task)
+                
+                subtasks = decompose_task(task)
+                if subtasks:
+                    # Create subtasks
+                    for subtask_desc in subtasks:
+                        subtask = self.create_task(
+                            project_id=task.project_id,
+                            description=subtask_desc["description"],
+                            language=task.language,
+                            requirements=subtask_desc.get("requirements", []),
+                            priority=task.priority,
+                            parent_task_id=task.task_id
+                        )
+                        self.logger.info(f"Created subtask {subtask.task_id} for task {task_id}")
                     
-                    # Run decomposer with task description and task ID
-                    self._run_script(os.path.join('agents', 'decomposer.py'), [task.description, task_id])
-                    
-                    # Task status will be updated by the decomposer
-                    return  # Exit to let the orchestrator pick up the subtasks
-                except subprocess.CalledProcessError as e:
-                    if "No subtasks needed" in (e.stderr or ""):
-                        # Task doesn't need decomposition, proceed with implementation
-                        task.update_status(TaskStatus.READY_FOR_IMPLEMENTATION, "Task will be implemented directly")
-                        self._save_task(task)
-                    else:
-                        raise  # Re-raise if it's a different error
+                    task.update_status(TaskStatus.DECOMPOSING, f"Created {len(subtasks)} subtasks")
+                else:
+                    task.update_status(TaskStatus.READY_FOR_IMPLEMENTATION, "No decomposition needed")
+                self._save_task(task)
             
             # If task is ready for implementation, run code generation
-            if task.status == TaskStatus.READY_FOR_IMPLEMENTATION:
-                # 1. Code Generation Agent
-                self.logger.info("Running Code Generation Agent")
-                self._run_script(os.path.join('agents', 'code_generation_agent.py'), [task_id])
+            elif task.status == TaskStatus.READY_FOR_IMPLEMENTATION:
+                task.update_status(TaskStatus.IMPLEMENTING, "Starting implementation")
+                self._save_task(task)
                 
-                # 2. Testing Agent
-                self.logger.info("Running Testing Agent")
-                self._run_script('testing_agent.py', [task_id])
-                
-                # 3. Quality Assessment Agent
-                self.logger.info("Running Quality Assessment Agent")
-                quality_agent_result = self._run_script('quality_assessment_agent.py', [task_id])
-                
-                # Parse quality assessment
-                quality_assessment = self._parse_quality_assessment(quality_agent_result.stdout)
-                
-                # 4. Decide next steps
-                if quality_assessment.get('needs_rewrite', False):
-                    self.logger.info(f"Task {task_id} needs revision")
-                    task.update_status(TaskStatus.NEEDS_REVISION, "Quality assessment indicates revision needed")
-                    self._save_task(task)
-                    # Optionally trigger rewrite process
-                    self._run_rewrite_process(task_id)
+                success = generate_code(task)
+                if success:
+                    task.update_status(TaskStatus.READY_FOR_TESTING, "Implementation completed")
                 else:
-                    # 5. Integration Agent
-                    self.logger.info("Running Integration Agent")
-                    self._run_script('integration_agent.py', [task_id])
-                    
-                    # Update task status to completed
-                    task.update_status(TaskStatus.COMPLETED, "Task completed successfully")
-                    self._save_task(task)
+                    task.update_status(TaskStatus.NEEDS_REVISION, "Implementation failed")
+                self._save_task(task)
+            
+            # Check if task is ready for testing
+            elif task.status == TaskStatus.READY_FOR_TESTING:
+                task.update_status(TaskStatus.TESTING, "Starting tests")
+                self._save_task(task)
                 
-                self.logger.info(f"Task {task_id} processing completed")
+                test_results = run_tests(task)
+                if test_results["passed"]:
+                    task.update_status(TaskStatus.READY_FOR_QUALITY, "Tests passed")
+                else:
+                    task.update_status(TaskStatus.NEEDS_REVISION, "Tests failed")
+                task.test_results = test_results
+                self._save_task(task)
+            
+            # Check if task is ready for quality assessment
+            elif task.status == TaskStatus.READY_FOR_QUALITY:
+                task.update_status(TaskStatus.QUALITY_CHECK, "Starting quality assessment")
+                self._save_task(task)
+                
+                quality_results = assess_quality(task)
+                if quality_results["passed"]:
+                    task.update_status(TaskStatus.READY_FOR_INTEGRATION, "Quality check passed")
+                else:
+                    task.update_status(TaskStatus.NEEDS_REVISION, "Quality check failed")
+                task.quality_results = quality_results
+                self._save_task(task)
+            
+            # Check if task is ready for integration
+            elif task.status == TaskStatus.READY_FOR_INTEGRATION:
+                # For tasks with subtasks, check if all subtasks are completed
+                if task.subtask_ids:
+                    all_subtasks_completed = all(
+                        self.tasks[subtask_id].status == TaskStatus.COMPLETED
+                        for subtask_id in task.subtask_ids
+                    )
+                    if not all_subtasks_completed:
+                        self.logger.info(f"Task {task_id} waiting for subtasks to complete")
+                        return
+                
+                task.update_status(TaskStatus.INTEGRATING, "Starting integration")
+                self._save_task(task)
+                
+                integration_results = integrate_task(task)
+                if integration_results["success"]:
+                    task.update_status(TaskStatus.COMPLETED, "Integration successful")
+                else:
+                    task.update_status(TaskStatus.NEEDS_REVISION, "Integration failed")
+                task.integration_results = integration_results
+                self._save_task(task)
+                
+                # Update project status if this is a root task
+                if project and task.task_id in project.root_tasks:
+                    self._update_project_status(project)
+            
+            self.logger.info(f"Task {task_id} processing completed")
             
         except Exception as e:
             self.logger.error(f"Error processing task {task_id}: {str(e)}")
@@ -436,32 +470,41 @@ class OrchestratorAgent:
                 self._save_task(task)
             raise
     
-    def _parse_quality_assessment(self, assessment_output: str) -> Dict:
-        """Parse quality assessment output"""
-        try:
-            return json.loads(assessment_output)
-        except json.JSONDecodeError:
-            self.logger.error("Failed to parse quality assessment output")
-            return {"needs_rewrite": True}
+    def _update_project_status(self, project: Project):
+        """
+        Update project status based on its root tasks.
+        
+        Args:
+            project (Project): Project to update
+        """
+        if not project.root_tasks:
+            return
+            
+        # Check status of all root tasks
+        root_task_statuses = [
+            self.tasks[task_id].status
+            for task_id in project.root_tasks
+            if task_id in self.tasks
+        ]
+        
+        # Update project status
+        if all(status == TaskStatus.COMPLETED for status in root_task_statuses):
+            project.status = ProjectStatus.COMPLETED
+        elif any(status == TaskStatus.ERROR for status in root_task_statuses):
+            project.status = ProjectStatus.ERROR
+        else:
+            project.status = ProjectStatus.ACTIVE
+        
+        project.save()
+        self.logger.info(f"Updated project {project.project_id} status to {project.status.value}")
     
-    def _update_task_status(self, task_id: str, status: TaskStatus):
-        """Update task status"""
-        task = self.get_task(task_id)
-        if task:
-            task.update_status(status, f"Status updated to {status.value}")
-            self._save_task(task)
-    
-    def _run_rewrite_process(self, task_id: str):
-        """Handle task rewrite process"""
-        self.logger.info(f"Initiating rewrite process for task {task_id}")
-        # Add rewrite logic here
-        pass
-
     def get_all_tasks(self) -> List[Dict]:
         """Get list of all tasks"""
         with self.tasks_lock:
-            # Convert all tasks to dictionaries
-            return [task.to_dict() for task in self.tasks.values()]
+            # Convert all tasks to dictionaries and log for debugging
+            tasks = [task.to_dict() for task in self.tasks.values()]
+            self.logger.debug(f"get_all_tasks: Found {len(tasks)} tasks")
+            return tasks
             
     def get_tasks_by_status(self, status: TaskStatus) -> List[Dict]:
         """Get list of tasks with the given status"""
@@ -496,6 +539,152 @@ class OrchestratorAgent:
             self._save_task(task)
             return True
         return False
+
+    def load_projects(self):
+        """Load all projects from disk."""
+        projects_dir = os.path.join(self.base_path, "projects")
+        if not os.path.exists(projects_dir):
+            return
+            
+        for project_id in os.listdir(projects_dir):
+            project_path = os.path.join(projects_dir, project_id)
+            if not os.path.isdir(project_path):
+                continue
+                
+            project_file = os.path.join(project_path, "project.json")
+            if not os.path.exists(project_file):
+                continue
+                
+            try:
+                with open(project_file, 'r') as f:
+                    project_data = json.load(f)
+                    project = Project.from_dict(project_data, os.path.join(self.base_path, "projects"))
+                    self.projects[project.project_id] = project
+                    self.logger.info(f"Loaded project {project.project_id}: {project.name}")
+            except Exception as e:
+                self.logger.error(f"Error loading project from {project_id}: {str(e)}")
+    
+    def load_tasks(self):
+        """Load all tasks from the tasks directory."""
+        tasks_dir = os.path.join(self.base_path, "tasks")
+        if not os.path.exists(tasks_dir):
+            self.logger.warning("Tasks directory does not exist")
+            return
+            
+        loaded_count = 0
+        for filename in os.listdir(tasks_dir):
+            if not filename.endswith(".json"):
+                continue
+                
+            try:
+                task_path = os.path.join(tasks_dir, filename)
+                task_data = load_json(task_path)
+                task = Task.from_dict(task_data)
+                
+                # Add to memory cache with lock
+                with self.tasks_lock:
+                    self.tasks[task.task_id] = task
+                    
+                self.logger.info(f"Loaded task {task.task_id} with status {task.status.value}")
+                loaded_count += 1
+            except Exception as e:
+                self.logger.error(f"Error loading task from {filename}: {str(e)}")
+        
+        self.logger.info(f"Successfully loaded {loaded_count} tasks")
+    
+    def create_project(self, name: str, description: str) -> Project:
+        """
+        Create a new project.
+        
+        Args:
+            name (str): Project name
+            description (str): Project description
+            
+        Returns:
+            Project: The created project
+        """
+        project = Project(name, description, os.path.join(self.base_path, "projects"))
+        self.projects[project.project_id] = project
+        project.save()
+        self.logger.info(f"Created project {project.project_id}: {name}")
+        return project
+    
+    def create_task(self, project_id: str, description: str, language: str,
+                   requirements: List[str] = None, priority: float = 50.0,
+                   parent_task_id: str = None) -> Task:
+        """
+        Create a new task within a project.
+        
+        Args:
+            project_id (str): ID of the project this task belongs to
+            description (str): Task description
+            language (str): Programming language
+            requirements (List[str], optional): List of requirements
+            priority (float, optional): Priority score
+            parent_task_id (str, optional): ID of parent task if this is a subtask
+            
+        Returns:
+            Task: The created task
+        """
+        if project_id not in self.projects:
+            raise ValueError(f"Project {project_id} not found")
+            
+        task = Task(description, language, requirements, priority)
+        task.project_id = project_id
+        task.parent_task_id = parent_task_id
+        
+        # Update parent task if this is a subtask
+        if parent_task_id:
+            if parent_task_id not in self.tasks:
+                raise ValueError(f"Parent task {parent_task_id} not found")
+            parent_task = self.tasks[parent_task_id]
+            parent_task.subtask_ids.append(task.task_id)
+            self._save_task(parent_task)
+        
+        self.tasks[task.task_id] = task
+        self._save_task(task)
+        
+        # Update project
+        project = self.projects[project_id]
+        if not parent_task_id:  # Only add to root_tasks if not a subtask
+            project.root_tasks.append(task.task_id)
+        project.all_tasks.append(task.task_id)
+        project.save()
+        
+        self.logger.info(f"Created task {task.task_id} in project {project_id}")
+        return task
+
+    def delete_task(self, task_id: str) -> bool:
+        """
+        Delete a task and its associated files.
+        
+        Args:
+            task_id (str): The ID of the task to delete
+            
+        Returns:
+            bool: True if task was deleted successfully
+        """
+        task = self.get_task(task_id)
+        if not task:
+            self.logger.error(f"Task {task_id} not found")
+            return False
+        
+        # Delete task file
+        task_file = os.path.join(self.base_path, "tasks", f"{task_id}.json")
+        try:
+            os.remove(task_file)
+            self.logger.debug(f"Deleted task file {task_file}")
+        except OSError as e:
+            self.logger.error(f"Failed to delete task file {task_file}: {e}")
+            return False
+        
+        # Delete task from memory
+        with self.tasks_lock:
+            if task_id in self.tasks:
+                del self.tasks[task_id]
+                self.logger.debug(f"Removed task {task_id} from memory")
+            
+        return True
 
 def main():
     """Main entry point"""

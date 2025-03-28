@@ -138,6 +138,35 @@ def save_tasks(tasks: List[Dict[str, Any]], language: str = "python", output_dir
         
     return created_tasks
 
+def decompose_task(task: Task) -> List[Dict[str, Any]]:
+    """
+    Decompose a task into subtasks.
+    
+    Args:
+        task (Task): The task to decompose
+        
+    Returns:
+        List[Dict[str, Any]]: List of subtask descriptions
+    """
+    logger.info(f"Decomposing task {task.task_id}")
+    
+    # Get subtasks from feature decomposition
+    subtasks = decompose_feature(task.description)
+    
+    # Format subtasks for the orchestrator
+    formatted_subtasks = []
+    for subtask in subtasks:
+        formatted_subtasks.append({
+            "description": f"{subtask['title']}\n\n{subtask['description']}\n\nAcceptance Criteria:\n" + 
+                         "\n".join(f"- {criterion}" for criterion in subtask['acceptance_criteria']),
+            "requirements": subtask.get('acceptance_criteria', []) +
+                          [f"Depends on: {dep}" for dep in subtask.get('dependencies', [])],
+            "priority": float(subtask.get('priority', 50.0))
+        })
+    
+    logger.info(f"Generated {len(formatted_subtasks)} subtasks for task {task.task_id}")
+    return formatted_subtasks
+
 def main():
     """Main entry point"""
     import sys
