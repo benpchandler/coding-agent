@@ -1,0 +1,11 @@
+{
+  "project_id": "PROJ-f115b292",
+  "name": "project structure",
+  "description": "Create a new FastAPI project for a financial analysis application with the following structure:\r\n- app/\r\n  - api/\r\n    - endpoints/\r\n      - __init__.py\r\n      - auth.py\r\n      - projects.py\r\n      - documents.py\r\n      - financial.py\r\n    - __init__.py\r\n    - dependencies.py\r\n  - core/\r\n    - __init__.py\r\n    - config.py\r\n    - security.py\r\n  - db/\r\n    - __init__.py\r\n    - base.py\r\n    - models.py\r\n    - session.py\r\n  - schemas/\r\n    - __init__.py\r\n    - users.py\r\n    - projects.py\r\n    - documents.py\r\n    - financial.py\r\n  - services/\r\n    - __init__.py\r\n    - document_processor.py\r\n    - financial_analyzer.py\r\n  - main.py\r\n  - requirements.txt\r\n\r\nInclude basic dependencies for FastAPI, SQLAlchemy, PyMuPDF, pandas, and JWT authentication.",
+  "root_tasks": [
+    "TASK-0c1381a0"
+  ],
+  "status": "created",
+  "created_at": "2025-03-28T17:35:38.110639",
+  "updated_at": "2025-03-28T17:35:38.110639"
+}

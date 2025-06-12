@@ -1,39 +1,60 @@
 import os
 import json
+from pathlib import Path
 from glob import glob
+
+# Get the absolute path to the tasks directory using pathlib for better path handling
+TASKS_DIR = Path(__file__).parent.parent / "tasks"
 
 def list_tasks(status="not_started"):
     """List all tasks with the given status."""
     tasks = []
-    task_files = glob("tasks/*.json")
-    
-    for task_file in task_files:
-        with open(task_file, "r") as f:
-            task = json.load(f)
-            if task.get("status", "not_started") == status:
-                tasks.append(task)
+    try:
+        # Use pathlib for better path handling
+        task_files = list(TASKS_DIR.glob("*.json"))
+        print(f"Looking for tasks in: {TASKS_DIR}")
+        print(f"Found {len(task_files)} task files")
+        
+        for task_file in task_files:
+            try:
+                with task_file.open('r', encoding='utf-8') as f:
+                    task = json.load(f)
+                    task_status = task.get("status", "not_started")
+                    # Consider 'created' tasks as 'not_started'
+                    if status == "not_started" and task_status == "created":
+                        tasks.append(task)
+                    elif task_status == status:
+                        tasks.append(task)
+            except Exception as e:
+                print(f"Error reading task file {task_file}: {str(e)}")
+    except Exception as e:
+        print(f"Error listing tasks: {str(e)}")
     
     # Sort by priority (lower number = higher priority)
     return sorted(tasks, key=lambda x: x.get("priority", 5))
 
 def mark_task_complete(task_id):
     """Mark a task as completed."""
-    task_file = f"tasks/{task_id}.json"
+    task_file = TASKS_DIR / f"{task_id}.json"
     
-    if not os.path.exists(task_file):
+    if not task_file.exists():
         print(f"Task {task_id} not found")
         return False
     
-    with open(task_file, "r") as f:
-        task = json.load(f)
-    
-    task["status"] = "completed"
-    
-    with open(task_file, "w") as f:
-        json.dump(task, f, indent=2)
-    
-    print(f"Task {task_id} marked as completed")
-    return True
+    try:
+        with task_file.open('r', encoding='utf-8') as f:
+            task = json.load(f)
+        
+        task["status"] = "completed"
+        
+        with task_file.open('w', encoding='utf-8') as f:
+            json.dump(task, f, indent=2)
+        
+        print(f"Task {task_id} marked as completed")
+        return True
+    except Exception as e:
+        print(f"Error marking task complete: {str(e)}")
+        return False
 
 def get_next_task():
     """Get the next task to work on."""

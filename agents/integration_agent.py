@@ -14,6 +14,8 @@ from models.task import Task, TaskStatus
 from models.integration_result import IntegrationResult
 from typing import Dict
 
+logger = setup_logger(__name__)
+
 def integrate_task(task: Task) -> Dict:
     """
     Integrate a task's code changes into the main codebase.
