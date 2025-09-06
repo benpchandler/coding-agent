@@ -186,8 +186,9 @@ HTML_HEADER = """
         <div>
             <a href="/">Home</a>
             <a href="/feature_form">Add Feature</a>
+            <a href="/peer_review_console">🔄 Peer Review</a>
+            <a href="/prompt_analytics">📊 Analytics</a>
             <a href="/api_key_settings">API Settings</a>
-            <a href="/feedback_dashboard">Peer Review</a>
         </div>
     </div>
 """
@@ -1714,6 +1715,616 @@ def generate_peer_review_stats():
         </div>
         """
 
+def generate_peer_review_console():
+    """Generate comprehensive peer review console"""
+    try:
+        import sys
+        sys.path.append('.')
+        from models.validation import FeedbackTracker
+        from models.prompt_logger import prompt_logger
+
+        tracker = FeedbackTracker()
+        recent_feedback = tracker.get_recent_feedback(hours=24, limit=10)
+
+        html = """
+        <div class="peer-review-console">
+            <h2>🔄 Peer Review Console</h2>
+            <p>Real-time monitoring of AI agent peer review activities</p>
+
+            <div class="console-grid">
+                <div class="console-section">
+                    <h3>🚀 Quick Actions</h3>
+                    <div class="quick-actions">
+                        <button onclick="runPeerReviewTask()" class="btn btn-primary">Run Peer Review Task</button>
+                        <a href="/prompt_analytics" class="btn">View Analytics</a>
+                        <a href="/feedback_dashboard" class="btn">Feedback History</a>
+                    </div>
+
+                    <div class="task-input" style="margin-top: 20px;">
+                        <h4>Test Peer Review System</h4>
+                        <form id="peer-review-form" onsubmit="return submitPeerReviewTask(event)">
+                            <textarea name="task_description" placeholder="Enter a task to test the peer review system..."
+                                    rows="3" style="width: 100%; margin-bottom: 10px;"></textarea>
+                            <select name="language" style="margin-bottom: 10px;">
+                                <option value="python">Python</option>
+                                <option value="javascript">JavaScript</option>
+                                <option value="java">Java</option>
+                                <option value="go">Go</option>
+                            </select>
+                            <button type="submit" class="btn btn-success">Start Peer Review</button>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="console-section">
+                    <h3>📊 Live Statistics</h3>
+                    <div class="live-stats">
+        """
+
+        # Get agent success rates
+        agents = ["code_generation", "testing", "quality_assessment"]
+        for agent in agents:
+            try:
+                success_rate = prompt_logger.get_prompt_success_rate(agent, hours=24)
+                feedback_analysis = prompt_logger.get_feedback_analysis(agent)
+
+                html += f"""
+                        <div class="stat-card">
+                            <h4>{agent.replace('_', ' ').title()}</h4>
+                            <div class="stat-row">
+                                <span>First-shot success:</span>
+                                <span class="stat-value {'success' if success_rate['success_rate'] > 0.7 else 'warning' if success_rate['success_rate'] > 0.4 else 'danger'}">{success_rate['success_rate']:.1%}</span>
+                            </div>
+                            <div class="stat-row">
+                                <span>Total attempts:</span>
+                                <span class="stat-value">{success_rate['total_attempts']}</span>
+                            </div>
+                            {f'<div class="stat-row"><span>Feedback received:</span><span class="stat-value">{feedback_analysis["total_feedback"]}</span></div>' if feedback_analysis['total_feedback'] > 0 else ''}
+                        </div>
+                """
+            except Exception as e:
+                html += f"""
+                        <div class="stat-card">
+                            <h4>{agent.replace('_', ' ').title()}</h4>
+                            <p>No data available</p>
+                        </div>
+                """
+
+        html += """
+                    </div>
+                </div>
+            </div>
+
+            <div class="console-section full-width">
+                <h3>💬 Recent Peer Review Activity</h3>
+                <div class="activity-feed">
+        """
+
+        if recent_feedback:
+            for feedback in recent_feedback[:5]:
+                confidence_class = "success" if feedback['validation_confidence'] > 0.8 else "warning" if feedback['validation_confidence'] > 0.5 else "danger"
+                html += f"""
+                    <div class="activity-item">
+                        <div class="activity-header">
+                            <span class="agent-flow">{feedback['from_agent']} → {feedback['to_agent']}</span>
+                            <span class="confidence-badge {confidence_class}">{feedback['validation_confidence']:.2f}</span>
+                            <span class="timestamp">{feedback['timestamp'][:19]}</span>
+                        </div>
+                        <div class="activity-content">
+                            <strong>Task:</strong> {feedback['task_id']}<br>
+                            <strong>Feedback:</strong> {feedback['feedback'][:150]}{'...' if len(feedback['feedback']) > 150 else ''}
+                        </div>
+                    </div>
+                """
+        else:
+            html += """
+                    <div class="activity-item">
+                        <p>No recent peer review activity. Run a task to see feedback in action!</p>
+                    </div>
+            """
+
+        html += """
+                </div>
+            </div>
+        </div>
+
+        <style>
+            .peer-review-console {
+                max-width: 1200px;
+                margin: 0 auto;
+            }
+            .console-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+                margin-bottom: 30px;
+            }
+            .console-section {
+                background: #f8f9fa;
+                padding: 20px;
+                border-radius: 8px;
+                border: 1px solid #dee2e6;
+            }
+            .console-section.full-width {
+                grid-column: 1 / -1;
+            }
+            .quick-actions {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+            .task-input textarea {
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                padding: 10px;
+            }
+            .task-input select {
+                padding: 8px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+            }
+            .live-stats {
+                display: grid;
+                gap: 15px;
+            }
+            .stat-card {
+                background: white;
+                padding: 15px;
+                border-radius: 6px;
+                border: 1px solid #e0e0e0;
+            }
+            .stat-card h4 {
+                margin: 0 0 10px 0;
+                color: #333;
+            }
+            .stat-row {
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 5px;
+            }
+            .stat-value {
+                font-weight: bold;
+            }
+            .stat-value.success { color: #28a745; }
+            .stat-value.warning { color: #ffc107; }
+            .stat-value.danger { color: #dc3545; }
+            .activity-feed {
+                max-height: 400px;
+                overflow-y: auto;
+            }
+            .activity-item {
+                background: white;
+                padding: 15px;
+                margin-bottom: 10px;
+                border-radius: 6px;
+                border-left: 4px solid #007bff;
+            }
+            .activity-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 8px;
+            }
+            .agent-flow {
+                font-weight: bold;
+                color: #495057;
+            }
+            .confidence-badge {
+                padding: 2px 8px;
+                border-radius: 12px;
+                font-size: 0.8em;
+                font-weight: bold;
+            }
+            .confidence-badge.success { background: #d4edda; color: #155724; }
+            .confidence-badge.warning { background: #fff3cd; color: #856404; }
+            .confidence-badge.danger { background: #f8d7da; color: #721c24; }
+            .timestamp {
+                font-size: 0.8em;
+                color: #6c757d;
+            }
+            .activity-content {
+                font-size: 0.9em;
+                line-height: 1.4;
+            }
+        </style>
+
+        <script>
+            function runPeerReviewTask() {
+                alert('Feature coming soon! Use the form below to test specific tasks.');
+            }
+
+            function submitPeerReviewTask(event) {
+                event.preventDefault();
+                const formData = new FormData(event.target);
+                const task = formData.get('task_description');
+                const language = formData.get('language');
+
+                if (!task.trim()) {
+                    alert('Please enter a task description');
+                    return false;
+                }
+
+                // Show loading state
+                const submitBtn = event.target.querySelector('button[type="submit"]');
+                const originalText = submitBtn.textContent;
+                submitBtn.textContent = 'Processing...';
+                submitBtn.disabled = true;
+
+                // Simulate API call (in real implementation, this would call the peer review system)
+                setTimeout(() => {
+                    alert(`Task submitted for peer review: "${task}" (${language})\\n\\nIn a real implementation, this would trigger the peer review workflow and show results here.`);
+                    submitBtn.textContent = originalText;
+                    submitBtn.disabled = false;
+                    event.target.reset();
+                }, 2000);
+
+                return false;
+            }
+        </script>
+        """
+
+        return html
+
+    except Exception as e:
+        return f"""
+        <div class="card">
+            <h2>Peer Review Console</h2>
+            <p>Error loading console: {str(e)}</p>
+            <p><a href="/" class="btn">Return to Dashboard</a></p>
+        </div>
+        """
+
+def generate_prompt_analytics():
+    """Generate comprehensive prompt analytics dashboard"""
+    try:
+        import sys
+        sys.path.append('.')
+        from models.prompt_logger import prompt_logger
+        from pathlib import Path
+        import json
+
+        html = """
+        <div class="analytics-dashboard">
+            <h2>📊 Prompt Analytics Dashboard</h2>
+            <p>Comprehensive analysis of prompt performance and feedback patterns</p>
+
+            <div class="analytics-grid">
+        """
+
+        # Agent Performance Overview
+        agents = ["decomposer", "code_generation", "testing", "quality_assessment"]
+        html += """
+                <div class="analytics-section">
+                    <h3>🤖 Agent Performance Overview</h3>
+                    <div class="performance-grid">
+        """
+
+        for agent in agents:
+            try:
+                success_rate = prompt_logger.get_prompt_success_rate(agent, hours=168)  # Last week
+                feedback_analysis = prompt_logger.get_feedback_analysis(agent)
+
+                success_class = "success" if success_rate['success_rate'] > 0.7 else "warning" if success_rate['success_rate'] > 0.4 else "danger"
+
+                html += f"""
+                        <div class="performance-card">
+                            <h4>{agent.replace('_', ' ').title()}</h4>
+                            <div class="performance-metric">
+                                <span class="metric-label">First-Shot Success</span>
+                                <span class="metric-value {success_class}">{success_rate['success_rate']:.1%}</span>
+                            </div>
+                            <div class="performance-details">
+                                <div>Total Attempts: {success_rate['total_attempts']}</div>
+                                <div>Successful First Attempts: {success_rate['first_shot_success']}</div>
+                                <div>Retry Attempts: {success_rate.get('retry_attempts', 0)}</div>
+                """
+
+                if feedback_analysis['total_feedback'] > 0:
+                    html += f"""
+                                <div>Feedback Received: {feedback_analysis['total_feedback']}</div>
+                                <div>Avg Confidence: {feedback_analysis['avg_confidence']:.2f}</div>
+                                <div>Retry Rate: {feedback_analysis['retry_rate']:.1%}</div>
+                    """
+
+                html += """
+                            </div>
+                        </div>
+                """
+            except Exception as e:
+                html += f"""
+                        <div class="performance-card">
+                            <h4>{agent.replace('_', ' ').title()}</h4>
+                            <p>No data available</p>
+                        </div>
+                """
+
+        html += """
+                    </div>
+                </div>
+        """
+
+        # Feedback Patterns Analysis
+        html += """
+                <div class="analytics-section">
+                    <h3>💬 Feedback Patterns Analysis</h3>
+                    <div class="feedback-analysis">
+        """
+
+        try:
+            # Load recent feedback logs
+            feedback_logs = list(Path("logs/feedback").glob("*.jsonl"))
+            if feedback_logs:
+                # Read the most recent log
+                with open(feedback_logs[-1]) as f:
+                    feedback_entries = [json.loads(line) for line in f if line.strip()]
+
+                # Analyze patterns
+                agent_pairs = {}
+                common_themes = {}
+
+                for entry in feedback_entries[-20:]:  # Last 20 entries
+                    pair = f"{entry['from_agent']} → {entry['to_agent']}"
+                    agent_pairs[pair] = agent_pairs.get(pair, 0) + 1
+
+                    # Simple theme extraction
+                    feedback_words = entry['feedback'].lower().split()
+                    for word in feedback_words:
+                        if len(word) > 5 and word not in ['however', 'additionally', 'consider', 'ensure']:
+                            common_themes[word] = common_themes.get(word, 0) + 1
+
+                # Top agent pairs
+                html += """
+                        <div class="feedback-section">
+                            <h4>Most Active Review Pairs</h4>
+                            <div class="pair-list">
+                """
+
+                for pair, count in sorted(agent_pairs.items(), key=lambda x: x[1], reverse=True)[:5]:
+                    html += f"""
+                                <div class="pair-item">
+                                    <span class="pair-name">{pair}</span>
+                                    <span class="pair-count">{count} reviews</span>
+                                </div>
+                    """
+
+                html += """
+                            </div>
+                        </div>
+
+                        <div class="feedback-section">
+                            <h4>Common Feedback Themes</h4>
+                            <div class="theme-list">
+                """
+
+                for theme, count in sorted(common_themes.items(), key=lambda x: x[1], reverse=True)[:8]:
+                    html += f"""
+                                <div class="theme-item">
+                                    <span class="theme-name">{theme}</span>
+                                    <span class="theme-count">{count}</span>
+                                </div>
+                    """
+
+                html += """
+                            </div>
+                        </div>
+                """
+            else:
+                html += """
+                        <p>No feedback data available yet. Run some peer review tasks to see analysis here!</p>
+                """
+        except Exception as e:
+            html += f"""
+                    <p>Error analyzing feedback patterns: {str(e)}</p>
+            """
+
+        html += """
+                    </div>
+                </div>
+        """
+
+        # Prompt Performance Insights
+        html += """
+                <div class="analytics-section full-width">
+                    <h3>🎯 Prompt Performance Insights</h3>
+                    <div class="insights-grid">
+                        <div class="insight-card">
+                            <h4>💡 Key Insights</h4>
+                            <ul class="insight-list">
+        """
+
+        # Generate insights based on data
+        try:
+            total_success = 0
+            total_attempts = 0
+
+            for agent in agents:
+                try:
+                    success_rate = prompt_logger.get_prompt_success_rate(agent, hours=168)
+                    total_success += success_rate['first_shot_success']
+                    total_attempts += success_rate['first_attempts']
+                except:
+                    pass
+
+            if total_attempts > 0:
+                overall_success = total_success / total_attempts
+                html += f"""
+                                <li>Overall first-shot success rate: <strong>{overall_success:.1%}</strong></li>
+                """
+
+                if overall_success > 0.7:
+                    html += """
+                                <li>🎉 Excellent performance! Agents are working well together</li>
+                    """
+                elif overall_success > 0.5:
+                    html += """
+                                <li>⚠️ Moderate performance. Consider prompt improvements</li>
+                    """
+                else:
+                    html += """
+                                <li>🔧 Low success rate. Prompts need optimization</li>
+                    """
+            else:
+                html += """
+                                <li>No performance data available yet</li>
+                                <li>Run some peer review tasks to generate insights</li>
+                """
+        except Exception as e:
+            html += f"""
+                            <li>Error generating insights: {str(e)}</li>
+            """
+
+        html += """
+                            </ul>
+                        </div>
+
+                        <div class="insight-card">
+                            <h4>🚀 Recommendations</h4>
+                            <ul class="insight-list">
+                                <li>Monitor agents with low first-shot success rates</li>
+                                <li>Analyze common feedback themes for prompt improvements</li>
+                                <li>Focus on agents that receive the most feedback</li>
+                                <li>Use successful prompt patterns for similar tasks</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-actions">
+                <a href="/peer_review_console" class="btn">Peer Review Console</a>
+                <a href="/feedback_dashboard" class="btn">Feedback History</a>
+                <a href="/" class="btn">Home</a>
+            </div>
+        </div>
+
+        <style>
+            .analytics-dashboard {
+                max-width: 1200px;
+                margin: 0 auto;
+            }
+            .analytics-grid {
+                display: grid;
+                gap: 30px;
+                margin-bottom: 30px;
+            }
+            .analytics-section {
+                background: #f8f9fa;
+                padding: 25px;
+                border-radius: 8px;
+                border: 1px solid #dee2e6;
+            }
+            .analytics-section.full-width {
+                grid-column: 1 / -1;
+            }
+            .performance-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 20px;
+            }
+            .performance-card {
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                border: 1px solid #e0e0e0;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .performance-card h4 {
+                margin: 0 0 15px 0;
+                color: #333;
+                border-bottom: 2px solid #007bff;
+                padding-bottom: 5px;
+            }
+            .performance-metric {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 15px;
+                padding: 10px;
+                background: #f8f9fa;
+                border-radius: 4px;
+            }
+            .metric-label {
+                font-weight: bold;
+                color: #495057;
+            }
+            .metric-value {
+                font-size: 1.2em;
+                font-weight: bold;
+            }
+            .metric-value.success { color: #28a745; }
+            .metric-value.warning { color: #ffc107; }
+            .metric-value.danger { color: #dc3545; }
+            .performance-details {
+                font-size: 0.9em;
+                color: #6c757d;
+            }
+            .performance-details div {
+                margin-bottom: 3px;
+            }
+            .feedback-analysis {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+            }
+            .feedback-section {
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                border: 1px solid #e0e0e0;
+            }
+            .pair-list, .theme-list {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .pair-item, .theme-item {
+                display: flex;
+                justify-content: space-between;
+                padding: 8px 12px;
+                background: #f8f9fa;
+                border-radius: 4px;
+                border-left: 3px solid #007bff;
+            }
+            .pair-count, .theme-count {
+                font-weight: bold;
+                color: #007bff;
+            }
+            .insights-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+            }
+            .insight-card {
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                border: 1px solid #e0e0e0;
+            }
+            .insight-list {
+                list-style: none;
+                padding: 0;
+            }
+            .insight-list li {
+                padding: 8px 0;
+                border-bottom: 1px solid #f0f0f0;
+            }
+            .insight-list li:last-child {
+                border-bottom: none;
+            }
+        </style>
+        """
+
+        return html
+
+    except Exception as e:
+        return f"""
+        <div class="card">
+            <h2>Prompt Analytics</h2>
+            <p>Error loading analytics: {str(e)}</p>
+            <p><a href="/" class="btn">Return to Dashboard</a></p>
+        </div>
+        """
+
 def get_html_page(page_name, **kwargs):
     """Return HTML for specified page"""
     html = HTML_HEADER
@@ -1780,6 +2391,10 @@ def get_html_page(page_name, **kwargs):
         html += generate_feedback_dashboard()
     elif page_name == "peer_review_stats":
         html += generate_peer_review_stats()
+    elif page_name == "peer_review_console":
+        html += generate_peer_review_console()
+    elif page_name == "prompt_analytics":
+        html += generate_prompt_analytics()
     
     html += HTML_FOOTER
     return html
@@ -1966,6 +2581,10 @@ def main():
                 self._send_response(get_html_page("feedback_dashboard"))
             elif path == "/peer_review_stats":
                 self._send_response(get_html_page("peer_review_stats"))
+            elif path == "/peer_review_console":
+                self._send_response(get_html_page("peer_review_console"))
+            elif path == "/prompt_analytics":
+                self._send_response(get_html_page("prompt_analytics"))
             else:
                 self.send_response(404)
                 self.send_header('Content-type', 'text/html')
