@@ -14,8 +14,8 @@ from models.task import Task, TaskStatus
 from common.logging_utils import setup_logger
 from common.json_utils import load_json, save_json
 
-# Load environment variables from config directory
-load_dotenv(os.path.join(project_root, "config", ".env"))
+# Load environment variables from project root
+load_dotenv(os.path.join(project_root, ".env"))
 
 # Setup logging
 logger = setup_logger(__name__)

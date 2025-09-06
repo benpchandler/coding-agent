@@ -16,6 +16,9 @@ import traceback
 from pathlib import Path
 import random
 import string
+import base64
+from cryptography.fernet import Fernet
+import hashlib
 
 # Constants and configuration
 PORT = 8000
@@ -24,11 +27,14 @@ TASKS_DIR = BASE_DIR / "tasks"
 PROJECTS_DIR = BASE_DIR / "projects"
 IMPLEMENTATIONS_DIR = BASE_DIR / "implementations"
 AGENTS_DIR = BASE_DIR / "agents"
+CONFIG_DIR = BASE_DIR / "config"
+SECURE_CONFIG_FILE = CONFIG_DIR / "secure_config.json"
 
 # Ensure directories exist
 TASKS_DIR.mkdir(exist_ok=True)
 PROJECTS_DIR.mkdir(exist_ok=True)
 IMPLEMENTATIONS_DIR.mkdir(exist_ok=True)
+CONFIG_DIR.mkdir(exist_ok=True)
 
 # HTML templates and styling
 HTML_HEADER = """
@@ -180,6 +186,8 @@ HTML_HEADER = """
         <div>
             <a href="/">Home</a>
             <a href="/feature_form">Add Feature</a>
+            <a href="/api_key_settings">API Settings</a>
+            <a href="/feedback_dashboard">Peer Review</a>
         </div>
     </div>
 """
@@ -191,6 +199,130 @@ HTML_FOOTER = """
 </body>
 </html>
 """
+
+# API Key Management Functions
+class SecureConfigManager:
+    """Manages secure storage of API keys and sensitive configuration"""
+
+    def __init__(self):
+        self.key_file = CONFIG_DIR / ".key"
+        self.config_file = SECURE_CONFIG_FILE
+
+    def _get_or_create_key(self):
+        """Get or create encryption key"""
+        if self.key_file.exists():
+            with open(self.key_file, 'rb') as f:
+                return f.read()
+        else:
+            key = Fernet.generate_key()
+            with open(self.key_file, 'wb') as f:
+                f.write(key)
+            # Make key file readable only by owner
+            os.chmod(self.key_file, 0o600)
+            return key
+
+    def _encrypt_data(self, data):
+        """Encrypt data using Fernet"""
+        key = self._get_or_create_key()
+        f = Fernet(key)
+        return f.encrypt(data.encode()).decode()
+
+    def _decrypt_data(self, encrypted_data):
+        """Decrypt data using Fernet"""
+        try:
+            key = self._get_or_create_key()
+            f = Fernet(key)
+            return f.decrypt(encrypted_data.encode()).decode()
+        except Exception:
+            return None
+
+    def save_api_key(self, api_key):
+        """Save encrypted API key"""
+        try:
+            config = {}
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+
+            config['openai_api_key'] = self._encrypt_data(api_key)
+            config['updated_at'] = datetime.datetime.now().isoformat()
+
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+
+            # Set environment variable for current session
+            os.environ['OPENAI_API_KEY'] = api_key
+            return True
+        except Exception as e:
+            print(f"Error saving API key: {e}")
+            return False
+
+    def get_api_key(self):
+        """Get decrypted API key from secure storage or environment"""
+        try:
+            # First check if already set in environment
+            env_key = os.environ.get('OPENAI_API_KEY')
+            if env_key and env_key != 'your-key-here':
+                return env_key
+
+            # Try to load from .env file
+            env_file = BASE_DIR / '.env'
+            if env_file.exists():
+                with open(env_file, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith('OPENAI_API_KEY=') and not line.endswith('your-openai-api-key-here'):
+                            api_key = line.split('=', 1)[1].strip().strip('"\'')
+                            if api_key and api_key.startswith('sk-'):
+                                os.environ['OPENAI_API_KEY'] = api_key
+                                return api_key
+
+            # Finally check secure storage
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+
+                encrypted_key = config.get('openai_api_key')
+                if encrypted_key:
+                    decrypted_key = self._decrypt_data(encrypted_key)
+                    if decrypted_key:
+                        # Set environment variable
+                        os.environ['OPENAI_API_KEY'] = decrypted_key
+                        return decrypted_key
+            return None
+        except Exception as e:
+            print(f"Error loading API key: {e}")
+            return None
+
+    def has_api_key(self):
+        """Check if API key is configured"""
+        api_key = self.get_api_key()
+        return api_key is not None and api_key.startswith('sk-')
+
+    def clear_api_key(self):
+        """Clear stored API key"""
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+
+                if 'openai_api_key' in config:
+                    del config['openai_api_key']
+                    config['updated_at'] = datetime.datetime.now().isoformat()
+
+                    with open(self.config_file, 'w') as f:
+                        json.dump(config, f, indent=2)
+
+            # Clear environment variable
+            if 'OPENAI_API_KEY' in os.environ:
+                del os.environ['OPENAI_API_KEY']
+            return True
+        except Exception as e:
+            print(f"Error clearing API key: {e}")
+            return False
+
+# Initialize secure config manager
+secure_config = SecureConfigManager()
 
 # Data loading functions
 def get_all_tasks():
@@ -1240,6 +1372,348 @@ def generate_bulk_delete_confirmation_html(selected_tasks):
     
     return html
 
+def generate_api_key_settings_html():
+    """Generate HTML for API key settings page"""
+    has_key = secure_config.has_api_key()
+
+    html = """
+    <div class="card">
+        <h2>OpenAI API Key Settings</h2>
+        <p>Configure your OpenAI API key to enable AI-powered task processing.</p>
+        <p><strong>Options:</strong> You can set your API key through this web interface (secure encrypted storage) or by creating a <code>.env</code> file in the project root.</p>
+    """
+
+    if has_key:
+        html += """
+        <div class="alert alert-success">
+            <strong>✓ API Key Configured</strong><br>
+            Your OpenAI API key is set and ready to use.
+        </div>
+
+        <h3>Update API Key</h3>
+        <form action="/save_api_key" method="post">
+            <div class="form-group">
+                <label for="api_key">New OpenAI API Key:</label>
+                <input type="password" id="api_key" name="api_key" placeholder="sk-..." required>
+                <small>Enter your new OpenAI API key to replace the current one.</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Update API Key</button>
+        </form>
+
+        <hr>
+
+        <h3>Remove API Key</h3>
+        <form action="/clear_api_key" method="post" onsubmit="return confirm('Are you sure you want to remove the API key?');">
+            <p>Remove the stored API key from the system.</p>
+            <button type="submit" class="btn btn-danger">Clear API Key</button>
+        </form>
+        """
+    else:
+        html += """
+        <div class="alert alert-warning">
+            <strong>⚠ No API Key Configured</strong><br>
+            You need to set an OpenAI API key to use AI features.
+        </div>
+
+        <form action="/save_api_key" method="post">
+            <div class="form-group">
+                <label for="api_key">OpenAI API Key:</label>
+                <input type="password" id="api_key" name="api_key" placeholder="sk-..." required>
+                <small>Get your API key from <a href="https://platform.openai.com/account/api-keys" target="_blank">OpenAI Platform</a></small>
+            </div>
+            <button type="submit" class="btn btn-primary">Save API Key</button>
+        </form>
+        """
+
+    html += """
+        <div style="margin-top: 20px;">
+            <a href="/" class="btn">Return to Dashboard</a>
+        </div>
+    </div>
+
+    <style>
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+        }
+        .alert-success {
+            color: #3c763d;
+            background-color: #dff0d8;
+            border-color: #d6e9c6;
+        }
+        .alert-warning {
+            color: #8a6d3b;
+            background-color: #fcf8e3;
+            border-color: #faebcc;
+        }
+    </style>
+    """
+
+    return html
+
+def generate_feedback_dashboard():
+    """Generate HTML for peer review feedback dashboard"""
+    try:
+        # Import feedback tracker
+        import sys
+        sys.path.append('.')
+        from models.validation import FeedbackTracker
+
+        tracker = FeedbackTracker()
+        feedback_stats = tracker.get_feedback_stats()
+        recent_feedback = tracker.get_recent_feedback(limit=10)
+
+        html = """
+        <div class="card">
+            <h2>🔄 Peer Review Dashboard</h2>
+            <p>Monitor inter-agent feedback and validation performance.</p>
+
+            <div class="stats-overview">
+                <div class="stat-card">
+                    <h3>Total Feedback Instances</h3>
+                    <p class="stat-number">{}</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Active Agents</h3>
+                    <p class="stat-number">{}</p>
+                </div>
+            </div>
+        """.format(
+            len(recent_feedback),
+            len(feedback_stats)
+        )
+
+        # Agent feedback statistics
+        if feedback_stats:
+            html += """
+            <h3>📊 Agent Feedback Statistics</h3>
+            <div class="agent-feedback-grid">
+            """
+
+            for agent, stats in feedback_stats.items():
+                html += f"""
+                <div class="agent-feedback-card">
+                    <h4>{agent.replace('_', ' ').title()}</h4>
+                    <div class="feedback-metrics">
+                        <p><strong>Feedback Received:</strong> {stats['received_count']} times</p>
+                        <p><strong>Retry Success Rate:</strong> {stats['retry_success_rate']:.1%}</p>
+                        <p><strong>Avg Confidence:</strong> {stats['avg_confidence']:.2f}/1.0</p>
+                    </div>
+                    <div class="common-issues">
+                        <strong>Common Issues:</strong>
+                        <ul>
+                """
+
+                for issue in stats['common_issues'][:3]:  # Top 3 issues
+                    html += f"<li>{issue}</li>"
+
+                html += """
+                        </ul>
+                    </div>
+                </div>
+                """
+
+            html += "</div>"
+
+        # Recent feedback
+        html += """
+        <h3>📝 Recent Feedback</h3>
+        <div class="recent-feedback-list">
+        """
+
+        if recent_feedback:
+            for feedback in recent_feedback:
+                retry_status = ""
+                if feedback.get('retry_successful') is not None:
+                    retry_status = "✅ Retry Successful" if feedback['retry_successful'] else "❌ Retry Failed"
+
+                html += f"""
+                <div class="feedback-item">
+                    <div class="feedback-header">
+                        <strong>{feedback['from_agent']} → {feedback['to_agent']}</strong>
+                        <span class="feedback-confidence">Confidence: {feedback['validation_confidence']:.2f}</span>
+                        <span class="feedback-time">{feedback['timestamp'][:19]}</span>
+                    </div>
+                    <div class="feedback-content">
+                        <p>{feedback['feedback'][:200]}{'...' if len(feedback['feedback']) > 200 else ''}</p>
+                        {f'<div class="retry-status">{retry_status}</div>' if retry_status else ''}
+                    </div>
+                    <div class="feedback-issues">
+                        <strong>Issues:</strong> {', '.join(feedback['issues']) if feedback['issues'] else 'None specified'}
+                    </div>
+                </div>
+                """
+        else:
+            html += "<p>No recent feedback available.</p>"
+
+        html += """
+        </div>
+
+        <div class="dashboard-actions">
+            <a href="/peer_review_stats" class="btn">Detailed Statistics</a>
+            <a href="/" class="btn">Return to Dashboard</a>
+        </div>
+
+        </div>
+
+        <style>
+            .stats-overview {
+                display: flex;
+                gap: 20px;
+                margin: 20px 0;
+            }
+            .stat-card {
+                background: #f8f9fa;
+                padding: 20px;
+                border-radius: 8px;
+                text-align: center;
+                flex: 1;
+            }
+            .stat-number {
+                font-size: 2em;
+                font-weight: bold;
+                color: #007bff;
+                margin: 10px 0;
+            }
+            .agent-feedback-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 20px;
+                margin: 20px 0;
+            }
+            .agent-feedback-card {
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                padding: 15px;
+                background: #fff;
+            }
+            .feedback-metrics p {
+                margin: 5px 0;
+            }
+            .common-issues ul {
+                margin: 10px 0;
+                padding-left: 20px;
+            }
+            .recent-feedback-list {
+                margin: 20px 0;
+            }
+            .feedback-item {
+                border: 1px solid #eee;
+                border-radius: 8px;
+                padding: 15px;
+                margin: 10px 0;
+                background: #fafafa;
+            }
+            .feedback-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 10px;
+            }
+            .feedback-confidence {
+                background: #e3f2fd;
+                padding: 2px 8px;
+                border-radius: 4px;
+                font-size: 0.9em;
+            }
+            .feedback-time {
+                color: #666;
+                font-size: 0.9em;
+            }
+            .feedback-content {
+                margin: 10px 0;
+            }
+            .retry-status {
+                margin-top: 10px;
+                font-weight: bold;
+            }
+            .feedback-issues {
+                margin-top: 10px;
+                font-size: 0.9em;
+                color: #666;
+            }
+            .dashboard-actions {
+                margin-top: 30px;
+                text-align: center;
+            }
+            .dashboard-actions .btn {
+                margin: 0 10px;
+            }
+        </style>
+        """
+
+        return html
+
+    except Exception as e:
+        return f"""
+        <div class="card">
+            <h2>Feedback Dashboard</h2>
+            <p>Error loading feedback data: {str(e)}</p>
+            <p>The peer review system may not have been used yet.</p>
+            <p><a href="/" class="btn">Return to Dashboard</a></p>
+        </div>
+        """
+
+def generate_peer_review_stats():
+    """Generate detailed peer review statistics"""
+    try:
+        import sys
+        sys.path.append('.')
+        from models.validation import FeedbackTracker
+
+        tracker = FeedbackTracker()
+        feedback_stats = tracker.get_feedback_stats()
+        recent_feedback = tracker.get_recent_feedback(hours=168, limit=50)  # Last week
+
+        html = """
+        <div class="card">
+            <h2>📈 Detailed Peer Review Statistics</h2>
+
+            <div class="stats-section">
+                <h3>System Overview</h3>
+                <div class="overview-stats">
+        """
+
+        total_feedback = len(recent_feedback)
+        unique_tasks = len(set(f['task_id'] for f in recent_feedback))
+        avg_confidence = sum(f['validation_confidence'] for f in recent_feedback) / len(recent_feedback) if recent_feedback else 0
+
+        html += f"""
+                    <div class="stat-item">
+                        <span class="stat-label">Total Feedback (7 days):</span>
+                        <span class="stat-value">{total_feedback}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Tasks with Feedback:</span>
+                        <span class="stat-value">{unique_tasks}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Average Confidence:</span>
+                        <span class="stat-value">{avg_confidence:.2f}</span>
+                    </div>
+                </div>
+            </div>
+        """
+
+        return html + """
+        <div class="dashboard-actions">
+            <a href="/feedback_dashboard" class="btn">Back to Dashboard</a>
+            <a href="/" class="btn">Home</a>
+        </div>
+        </div>
+        """
+
+    except Exception as e:
+        return f"""
+        <div class="card">
+            <h2>Peer Review Statistics</h2>
+            <p>Error loading statistics: {str(e)}</p>
+            <p><a href="/feedback_dashboard" class="btn">Back to Dashboard</a></p>
+        </div>
+        """
+
 def get_html_page(page_name, **kwargs):
     """Return HTML for specified page"""
     html = HTML_HEADER
@@ -1282,6 +1756,30 @@ def get_html_page(page_name, **kwargs):
             <p><a href="/" class="btn">Return to Dashboard</a></p>
         </div>
         """
+    elif page_name == "api_key_settings":
+        html += generate_api_key_settings_html()
+    elif page_name == "api_key_saved":
+        html += """
+        <div class="card">
+            <h2>API Key Saved</h2>
+            <p>Your OpenAI API key has been saved successfully and is now available for use.</p>
+            <p><a href="/" class="btn">Return to Dashboard</a></p>
+            <p><a href="/api_key_settings" class="btn">Manage API Key</a></p>
+        </div>
+        """
+    elif page_name == "api_key_cleared":
+        html += """
+        <div class="card">
+            <h2>API Key Cleared</h2>
+            <p>Your OpenAI API key has been removed from the system.</p>
+            <p><a href="/" class="btn">Return to Dashboard</a></p>
+            <p><a href="/api_key_settings" class="btn">Set New API Key</a></p>
+        </div>
+        """
+    elif page_name == "feedback_dashboard":
+        html += generate_feedback_dashboard()
+    elif page_name == "peer_review_stats":
+        html += generate_peer_review_stats()
     
     html += HTML_FOOTER
     return html
@@ -1413,6 +1911,13 @@ def main():
     print("Starting Task Manager Web Dashboard...")
     print(f"Looking for tasks in: {TASKS_DIR}")
     print(f"Looking for projects in: {PROJECTS_DIR}")
+
+    # Load API key on startup
+    api_key = secure_config.get_api_key()
+    if api_key:
+        print("✓ OpenAI API key loaded successfully")
+    else:
+        print("⚠ No OpenAI API key configured. Visit /api_key_settings to set one.")
     
     # Define the request handler
     class TaskManagerHandler(http.server.SimpleHTTPRequestHandler):
@@ -1451,6 +1956,16 @@ def main():
                     self._send_response(f"<p>Error triggering agent for task {task_id}</p>")
             elif path == "/kanban":
                 self._send_response("<h2>Kanban Board</h2><p>Kanban board feature coming soon!</p>")
+            elif path == "/api_key_settings":
+                self._send_response(get_html_page("api_key_settings"))
+            elif path == "/api_key_saved":
+                self._send_response(get_html_page("api_key_saved"))
+            elif path == "/api_key_cleared":
+                self._send_response(get_html_page("api_key_cleared"))
+            elif path == "/feedback_dashboard":
+                self._send_response(get_html_page("feedback_dashboard"))
+            elif path == "/peer_review_stats":
+                self._send_response(get_html_page("peer_review_stats"))
             else:
                 self.send_response(404)
                 self.send_header('Content-type', 'text/html')
@@ -1566,6 +2081,32 @@ def main():
                     self.send_response(303)
                     self.send_header('Location', '/')
                     self.end_headers()
+            elif self.path == "/save_api_key":
+                # Handle API key saving
+                api_key = single_value_form_data.get('api_key', '').strip()
+                if not api_key:
+                    self._send_response("API key cannot be empty", 400)
+                elif not api_key.startswith('sk-'):
+                    self._send_response("Invalid API key format. OpenAI API keys start with 'sk-'", 400)
+                else:
+                    success = secure_config.save_api_key(api_key)
+                    if success:
+                        # Redirect to success page
+                        self.send_response(302)
+                        self.send_header('Location', '/api_key_saved')
+                        self.end_headers()
+                    else:
+                        self._send_response("Failed to save API key", 500)
+            elif self.path == "/clear_api_key":
+                # Handle API key clearing
+                success = secure_config.clear_api_key()
+                if success:
+                    # Redirect to cleared page
+                    self.send_response(302)
+                    self.send_header('Location', '/api_key_cleared')
+                    self.end_headers()
+                else:
+                    self._send_response("Failed to clear API key", 500)
             else:
                 self.send_response(200)
                 self.send_header('Content-type', 'text/html')

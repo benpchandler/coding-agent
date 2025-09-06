@@ -7,10 +7,25 @@ import sys
 import logging
 import argparse
 from typing import Optional
+from pathlib import Path
 
 from agents.orchestration_agent import OrchestratorAgent
 from models.task import Task, TaskStatus
 from models.project import Project, ProjectStatus
+
+def load_environment():
+    """Load environment variables from .env file if it exists"""
+    env_file = Path('.env')
+    if env_file.exists():
+        with open(env_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip().strip('"\'')
+                    if key and value:
+                        os.environ[key] = value
 
 def setup_logging():
     """Set up logging configuration"""
@@ -184,10 +199,20 @@ def main():
     
     args = parser.parse_args()
     
+    # Load environment variables first
+    load_environment()
+
     # Set up logging
     global logger
     logger = setup_logging()
     logger.info("Starting AI-Driven Development Workflow System")
+
+    # Check if API key is available
+    api_key = os.getenv("OPENAI_API_KEY")
+    if api_key and api_key.startswith('sk-'):
+        logger.info("✓ OpenAI API key loaded successfully")
+    else:
+        logger.warning("⚠ No valid OpenAI API key found. Set OPENAI_API_KEY environment variable or create .env file")
     
     # Initialize orchestrator
     base_path = os.path.dirname(os.path.abspath(__file__))
