@@ -31,8 +31,8 @@ class BaseAgentEnhanced(ABC):
         # Initialize OpenAI client
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         
-        # Model configuration
-        self.model = self.config.get("model", "gpt-4-turbo")
+        # Model configuration - using cost-effective model
+        self.model = self.config.get("model", "gpt-4o-mini")
         self.temperature = self.config.get("temperature", 0.1)
         self.max_tokens = self.config.get("max_tokens", 4000)
         
@@ -192,9 +192,9 @@ class BaseAgentEnhanced(ABC):
             with open(config_path, 'r') as f:
                 return json.load(f)
         
-        # Default configuration
+        # Default configuration - using cost-effective model
         return {
-            "model": "gpt-4-turbo",
+            "model": "gpt-4o-mini",
             "temperature": 0.1,
             "max_tokens": 4000
         }

@@ -80,7 +80,7 @@ FORMAT YOUR RESPONSE AS A JSON ARRAY.
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",  # Using GPT-4 for better task decomposition
+            model="gpt-4o-mini",  # Using cost-effective model for task decomposition
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1
         )

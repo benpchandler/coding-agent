@@ -268,7 +268,7 @@ def implement_task(task: Task) -> Tuple[Optional[str], Optional[str]]:
     try:
         logger.info(f"Generating implementation for task: {task.description}")
         response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",  # Using GPT-4 for better code generation
+            model="gpt-4o-mini",  # Using cost-effective model for code generation
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1
         )
