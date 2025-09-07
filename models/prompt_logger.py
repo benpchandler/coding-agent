@@ -50,10 +50,13 @@ class PromptLogger:
     def __init__(self):
         self.logger = logging.getLogger(f"{__name__}.PromptLogger")
         self.executions: List[PromptExecution] = []
-        
+
         # Create logs directory
         self.log_dir = Path("logs/prompts")
         self.log_dir.mkdir(parents=True, exist_ok=True)
+
+        # Load existing executions from log files
+        self._load_existing_executions()
     
     def log_prompt_execution(self, 
                            task_id: str,
@@ -225,6 +228,30 @@ class PromptLogger:
             json.dump(analysis, f, indent=2, default=str)
         
         self.logger.info(f"Analysis exported to {output_file}")
+
+    def _load_existing_executions(self) -> None:
+        """Load existing executions from log files"""
+        try:
+            # Load from all existing log files
+            log_files = list(self.log_dir.glob("prompts_*.jsonl"))
+
+            for log_file in log_files:
+                try:
+                    with open(log_file, 'r') as f:
+                        for line in f:
+                            if line.strip():
+                                data = json.loads(line)
+                                # Convert timestamp back to datetime
+                                data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+                                execution = PromptExecution(**data)
+                                self.executions.append(execution)
+                except Exception as e:
+                    self.logger.warning(f"Failed to load executions from {log_file}: {e}")
+
+            self.logger.info(f"Loaded {len(self.executions)} existing prompt executions")
+
+        except Exception as e:
+            self.logger.error(f"Failed to load existing executions: {e}")
 
 # Global instance
 prompt_logger = PromptLogger()
