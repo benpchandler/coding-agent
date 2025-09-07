@@ -31,10 +31,11 @@ class BaseAgentEnhanced(ABC):
         # Initialize OpenAI client
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         
-        # Model configuration - using cost-effective model
-        self.model = self.config.get("model", "gpt-4o-mini")
-        self.temperature = self.config.get("temperature", 0.1)
+        # Model configuration - using GPT-5 nano (most cost-effective GPT-5 model)
+        self.model = self.config.get("model", "gpt-5-nano")
+        self.temperature = self.config.get("temperature", 1.0)  # GPT-5 nano default
         self.max_tokens = self.config.get("max_tokens", 4000)
+        self.max_completion_tokens = self.config.get("max_completion_tokens", 4000)
         
         # Feedback tracker (shared instance)
         self.feedback_tracker = FeedbackTracker()
@@ -138,7 +139,7 @@ class BaseAgentEnhanced(ABC):
             messages = [{"role": "user", "content": validation_prompt}]
             response_content = await self._make_openai_request(
                 messages,
-                temperature=0.1,
+                temperature=self.temperature,  # Use model's default temperature
                 task_id=task.task_id,
                 attempt_number=1
             )
@@ -192,11 +193,11 @@ class BaseAgentEnhanced(ABC):
             with open(config_path, 'r') as f:
                 return json.load(f)
         
-        # Default configuration - using cost-effective model
+        # Default configuration - using GPT-5 nano
         return {
-            "model": "gpt-4o-mini",
-            "temperature": 0.1,
-            "max_tokens": 4000
+            "model": "gpt-5-nano",
+            "temperature": 1.0,  # GPT-5 nano only supports default temperature
+            "max_completion_tokens": 4000  # GPT-5 nano uses max_completion_tokens instead of max_tokens
         }
     
     async def _make_openai_request(self, messages: List[Dict[str, str]],
@@ -211,18 +212,27 @@ class BaseAgentEnhanced(ABC):
         prompt = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=temperature or self.temperature,
-                max_tokens=self.max_tokens
-            )
+            # Handle different parameter names for different models
+            api_params = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature or self.temperature
+            }
+
+            # GPT-5 models use max_completion_tokens instead of max_tokens
+            if "gpt-5" in self.model:
+                api_params["max_completion_tokens"] = getattr(self, 'max_completion_tokens', 4000)
+            else:
+                api_params["max_tokens"] = getattr(self, 'max_tokens', 4000)
+
+            response = self.client.chat.completions.create(**api_params)
 
             execution_time = time.time() - start_time
             response_content = response.choices[0].message.content
 
             # Log the complete prompt-response cycle
             if task_id:
+                max_tokens_value = getattr(self, 'max_completion_tokens', None) or getattr(self, 'max_tokens', 4000)
                 prompt_logger.log_prompt_execution(
                     task_id=task_id,
                     agent_type=self.agent_type,
@@ -230,7 +240,7 @@ class BaseAgentEnhanced(ABC):
                     response=response_content,
                     model=self.model,
                     temperature=temperature or self.temperature,
-                    max_tokens=self.max_tokens,
+                    max_tokens=max_tokens_value,
                     execution_time=execution_time,
                     success=True,
                     attempt_number=attempt_number
@@ -243,6 +253,7 @@ class BaseAgentEnhanced(ABC):
 
             # Log failed execution
             if task_id:
+                max_tokens_value = getattr(self, 'max_completion_tokens', None) or getattr(self, 'max_tokens', 4000)
                 prompt_logger.log_prompt_execution(
                     task_id=task_id,
                     agent_type=self.agent_type,
@@ -250,7 +261,7 @@ class BaseAgentEnhanced(ABC):
                     response=f"ERROR: {str(e)}",
                     model=self.model,
                     temperature=temperature or self.temperature,
-                    max_tokens=self.max_tokens,
+                    max_tokens=max_tokens_value,
                     execution_time=execution_time,
                     success=False,
                     attempt_number=attempt_number

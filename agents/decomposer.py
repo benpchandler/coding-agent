@@ -80,9 +80,9 @@ FORMAT YOUR RESPONSE AS A JSON ARRAY.
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",  # Using cost-effective model for task decomposition
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1
+            model="gpt-5-nano",  # Using GPT-5 nano for task decomposition
+            messages=[{"role": "user", "content": prompt}]
+            # Note: GPT-5 nano only supports default temperature (1)
         )
         
         # Extract JSON from the response

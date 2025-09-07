@@ -192,7 +192,7 @@ class FeedbackOrchestrator:
                 agent_type='decomposer',
                 task_id=task.task_id,
                 execution_time=execution_time,
-                model_used='gpt-4o-mini'
+                model_used='gpt-5-nano'
             )
 
         except Exception as e:
@@ -203,7 +203,7 @@ class FeedbackOrchestrator:
                 agent_type='decomposer',
                 task_id=task.task_id,
                 execution_time=execution_time,
-                model_used='gpt-4o-mini'
+                model_used='gpt-5-nano'
             )
     
     async def _retry_decomposer_function_with_feedback(self, task: Task, feedback: str) -> AgentResult:
